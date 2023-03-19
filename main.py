@@ -90,19 +90,25 @@ async def _error_deferred_repsonse(interaction: Interaction, message: str):
 
 def _get_subtitles(info):
     # Prefer standard subtitles
-    if len(info['subtitles']) > 0:
-        for sub in list(info['subtitles'].values())[0]:  # TODO: prefer english/nl
+    sub_formats = _choose_subtitle_language(info)
+    if sub_formats:
+        for sub in sub_formats:
             if sub['ext'] == 'json3':
                 return _dl_subtitle(sub['url'])
-
-    # Fall back to automatic captions
-    for lang_key, subs in info['automatic_captions'].items():
-        if lang_key.endswith('-orig'):
-            for sub in subs:
-                if sub['ext'] == 'json3':
-                    return _dl_subtitle(sub['url'])
+        print("Subtitles found but json format not available!")
 
     return None
+
+
+def _choose_subtitle_language(info):
+    if len(info['subtitles']) > 0:
+        for sub_formats in list(info['subtitles'].values())[0]:  # TODO: prefer english/nl
+            return sub_formats
+
+    # Fall back to automatic captions
+    for lang_key, sub_formats in info['automatic_captions'].items():
+        if lang_key.endswith('-orig'):
+            return sub_formats
 
 
 def _dl_subtitle(url):
