@@ -33,7 +33,7 @@ async def on_ready():
 @app_commands.describe(url="The URL or identifier of the Youtube video")
 async def summarize(interaction: Interaction, url: str):
     """Summarize a Youtube video"""
-    await interaction.response.defer()
+    await interaction.response.defer()  # TODO: proper error handling so we always followup
 
     with YoutubeDL() as ydl:
         info = ydl.extract_info(url, download=False)
@@ -41,7 +41,7 @@ async def summarize(interaction: Interaction, url: str):
         subtitles = _get_subtitles(info)
 
     if not subtitles:
-        await interaction.followup.send("There is not enough information on this video.", ephemeral=True)
+        await _error_deferred_repsonse(interaction, "There is not enough information on this video.")
         return
 
     # TODO: count tokens and fail fast
@@ -70,7 +70,7 @@ async def summarize(interaction: Interaction, url: str):
     except InvalidRequestError as e:
         # FIXME: ephemeral doesn't work?
         print(f"Failed to create chat completion:", e)
-        await interaction.followup.send(f"Failed to create summary for video", ephemeral=True, wait=True)
+        await _error_deferred_repsonse(interaction, "Failed to create summary for video")
         return
 
     # Return the first response of the both as the interaction response, and create a thread for followup questions
@@ -78,6 +78,14 @@ async def summarize(interaction: Interaction, url: str):
     await interaction.followup.send(f"> ***{title}***\n\n{summary}", wait=True)
     msg = await interaction.original_response()
     await msg.create_thread(name=title)
+
+
+async def _error_deferred_repsonse(interaction: Interaction, message: str):
+    """Send an ephemeral error message as followup to a non-ephemeral deferred response"""
+    # Remove the original response, so we can send ephemerally
+    msg = await interaction.original_response()
+    await msg.delete()
+    await interaction.followup.send(message, ephemeral=True)
 
 
 def _get_subtitles(info):
