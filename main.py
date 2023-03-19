@@ -1,10 +1,11 @@
 import math
 import os
+import time
 
 import discord
 import openai
 import requests
-from discord import Interaction
+from discord import Interaction, Message, Thread
 from discord import app_commands
 from dotenv import load_dotenv
 from openai import InvalidRequestError
@@ -29,6 +30,7 @@ async def on_ready():
 
 
 # TODO: automatic mode (respond to any youtube link)
+# TODO: private option (ephemeral responses and private threads)
 @tree.command()
 @app_commands.describe(url="The URL or identifier of the Youtube video")
 async def summarize(interaction: Interaction, url: str):
@@ -73,11 +75,22 @@ async def summarize(interaction: Interaction, url: str):
         await _error_deferred_repsonse(interaction, "Failed to create summary for video")
         return
 
-    # Return the first response of the both as the interaction response, and create a thread for followup questions
+    # Return the first response of the both as the interaction response
     print('Responding to interaction')
     await interaction.followup.send(f"> ***{title}***\n\n{summary}", wait=True)
+
+    # Create the thread for followup questions
     msg = await interaction.original_response()
-    await msg.create_thread(name=title)
+    await msg.create_thread(name=title, auto_archive_duration=60)
+
+
+@client.event
+async def on_message(message: Message):
+    if message.author != client.user and isinstance(message.channel, Thread) and message.channel.owner == client.user:
+        await message.channel.edit(locked=True)  # TODO: ephemeral error reply where locking doesn't work (moderator/permissions)?
+        time.sleep(5)  # TODO: unimplemented
+        await message.channel.edit(locked=False)  # FIXME: discord.errors.Forbidden: 403 Forbidden (error code: 50001): Missing Access
+        await message.channel.send("TEST")
 
 
 async def _error_deferred_repsonse(interaction: Interaction, message: str):
