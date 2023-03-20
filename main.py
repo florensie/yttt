@@ -22,6 +22,9 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+# Ongoing threads TODO: persist in sqlite
+ongoing_threads = {}
+
 
 @client.event
 async def on_ready():
@@ -51,46 +54,60 @@ async def summarize(interaction: Interaction, url: str):
     # Request a summary from ChatGPT
     print('Sending subs to ChatGPT')
     try:
-        completion = await openai.ChatCompletion.acreate(
-            model=MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that generates summaries of YouTube videos based on their "
-                               "captions."
-                },
-                {
-                    "role": "user",
-                    "content": f"Summarize the following YouTube video: \"{title}\". Here are the captions:\n\n{subtitles}"
-                },
-            ],
-            temperature=0.7,
-            user=str(interaction.user.id)
-            # TODO: max response tokens to match discord message limit (minus length of the title)
-        )
-        summary = completion['choices'][0]['message']['content']
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that generates summaries of YouTube videos based on their "
+                           "captions."
+            },
+            {
+                "role": "user",
+                "content": f"Summarize the following YouTube video: \"{title}\". Here are the captions:\n\n{subtitles}"
+            },
+        ]
+        completion = await _create_completion(interaction.user, messages)  # TODO: check what this actually returns
     except InvalidRequestError as e:
-        # FIXME: ephemeral doesn't work?
         print(f"Failed to create chat completion:", e)
         await _error_deferred_repsonse(interaction, "Failed to create summary for video")
         return
 
     # Return the first response of the both as the interaction response
     print('Responding to interaction')
-    await interaction.followup.send(f"> ***{title}***\n\n{summary}", wait=True)
+    await interaction.followup.send(f"> ***{title}***\n\n{completion['content']}")
 
     # Create the thread for followup questions
     msg = await interaction.original_response()
-    await msg.create_thread(name=title, auto_archive_duration=60)
+    thread = await msg.create_thread(name=title, auto_archive_duration=60)
+    ongoing_threads[thread.id] = [*messages, completion]
+
+
+async def _create_completion(user, messages):
+    completion = await openai.ChatCompletion.acreate(
+        model=MODEL,
+        messages=messages,
+        temperature=0.7,
+        user=str(user.id)
+        # TODO: max response tokens to match discord message limit (minus length of the title)
+    )
+    return completion['choices'][0]['message']
 
 
 @client.event
 async def on_message(message: Message):
-    if message.author != client.user and isinstance(message.channel, Thread) and message.channel.owner == client.user:
-        await message.channel.edit(locked=True)  # TODO: ephemeral error reply where locking doesn't work (moderator/permissions)?
-        time.sleep(5)  # TODO: unimplemented
-        await message.channel.edit(locked=False)  # FIXME: discord.errors.Forbidden: 403 Forbidden (error code: 50001): Missing Access
-        await message.channel.send("TEST")
+    if message.author != client.user\
+            and isinstance(thread := message.channel, Thread)\
+            and thread.owner == client.user\
+            and thread.id in ongoing_threads:
+        await thread.edit(locked=True)  # TODO: ephemeral error reply where locking doesn't work (moderator/permissions)?
+        ongoing_thread = ongoing_threads[thread.id]
+        new_message = {
+            "role": "user",
+            "content": message.content  # TODO: read message intent
+        }
+        response = await _create_completion(message.author, [*ongoing_thread, new_message])
+        await thread.edit(locked=False)  # FIXME: discord.errors.Forbidden: 403 Forbidden (error code: 50001): Missing Access
+        await thread.send(response['content'])
+        ongoing_thread += [new_message, response]
 
 
 async def _error_deferred_repsonse(interaction: Interaction, message: str):
@@ -115,8 +132,7 @@ def _get_subtitles(info):
 
 def _choose_subtitle_language(info):
     if len(info['subtitles']) > 0:
-        for sub_formats in list(info['subtitles'].values())[0]:  # TODO: prefer english/nl
-            return sub_formats
+        return list(info['subtitles'].values())[0]  # TODO: prefer english/nl
 
     # Fall back to automatic captions
     for lang_key, sub_formats in info['automatic_captions'].items():
