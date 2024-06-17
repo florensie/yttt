@@ -16,7 +16,7 @@ pycryptodomex==3.17
 python-dotenv==1.0.0
 requests==2.30.0
 tqdm==4.65.0
-urllib3==1.26.15
+urllib3==1.26.19
 websockets==11.0.3
 yarl==1.9.2
 yt-dlp==2023.3.4
